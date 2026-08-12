@@ -46,7 +46,8 @@ export function printBanner() {
   console.log();
   console.log(chalk.gray('  输入消息开始对话，输入 ') + chalk.yellow('/exit') + chalk.gray(' 或 ') + chalk.yellow('/quit') + chalk.gray(' 退出'));
   console.log(chalk.gray('  行首输入 ') + chalk.yellow('/') + chalk.gray(' 可选择指令，') + chalk.yellow('@') + chalk.gray(' 可选择文件作为上下文'));
-  console.log(chalk.gray('  输入 ') + chalk.yellow('/clear') + chalk.gray(' 清空对话记录 · ') + chalk.yellow('/help') + chalk.gray(' 查看帮助'));
+  console.log(chalk.gray('  输入 ') + chalk.yellow('/clear') + chalk.gray(' 清空对话记录 · ') + chalk.yellow('/project') + chalk.gray(' 注入项目信息 · ') + chalk.yellow('/help') + chalk.gray(' 查看帮助'));
+  console.log(chalk.gray('  自定义指令：') + chalk.yellow('~/.front/commands') + chalk.gray(' 或项目 ') + chalk.yellow('.front/commands') + chalk.gray('，形如 ') + chalk.yellow('/组:名'));
   console.log();
 }
 

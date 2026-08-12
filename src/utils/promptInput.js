@@ -148,8 +148,9 @@ export function askWithSuggest(options = {}) {
       stdout.write('\r\x1b[2K');
       stdout.write(prompt);
       stdout.write(line);
-      const promptLen = stripAnsi(prompt).length;
-      const col = promptLen + cursor + 1;
+      // 终端列位置按显示宽度计算（CJK 等宽字符为 2），不能用 String.length
+      const before = chars.slice(0, cursor).join('');
+      const col = stringWidth(prompt) + stringWidth(before) + 1;
       stdout.write(`\r\x1b[${col}G`);
     }
 
@@ -362,11 +363,56 @@ export function askWithSuggest(options = {}) {
   });
 }
 
-/** 粗略去掉 ANSI，用于计算光标列 */
+/** 去掉 ANSI 转义，用于计算可见文本 */
 function stripAnsi(str) {
-  return String(str).replace(
-    // eslint-disable-next-line no-control-regex
-    /\x1B\[[0-9;]*[A-Za-z]/g,
-    '',
-  );
+  return String(str)
+    // OSC 序列（如超链接）
+    .replace(/\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g, '')
+    // CSI 序列
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    // 字符集切换等
+    .replace(/\u001b[()][0-9A-Za-z]/g, '');
+}
+
+/**
+ * 单个码点的终端显示列宽（东亚宽字符按 2 列）
+ * @param {number} code
+ * @returns {number}
+ */
+function codePointWidth(code) {
+  if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
+    return 0;
+  }
+  // 常见宽字符区间：CJK、全角、韩文音节等
+  if (
+    (code >= 0x1100 && code <= 0x115f) ||
+    code === 0x2329 ||
+    code === 0x232a ||
+    (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f) ||
+    (code >= 0xac00 && code <= 0xd7a3) ||
+    (code >= 0xf900 && code <= 0xfaff) ||
+    (code >= 0xfe10 && code <= 0xfe19) ||
+    (code >= 0xfe30 && code <= 0xfe6f) ||
+    (code >= 0xff00 && code <= 0xff60) ||
+    (code >= 0xffe0 && code <= 0xffe6) ||
+    (code >= 0x20000 && code <= 0x2fffd) ||
+    (code >= 0x30000 && code <= 0x3fffd)
+  ) {
+    return 2;
+  }
+  return 1;
+}
+
+/**
+ * 字符串在终端中的显示列宽（先去 ANSI）
+ * @param {string} str
+ * @returns {number}
+ */
+function stringWidth(str) {
+  const plain = stripAnsi(str);
+  let width = 0;
+  for (const ch of plain) {
+    width += codePointWidth(ch.codePointAt(0) || 0);
+  }
+  return width;
 }
