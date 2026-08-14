@@ -1,5 +1,33 @@
 import { localClient } from './localClient.js';
-import { toolList, toolMap } from './skill.js';
+import { toolList as skillToolList, toolMap as skillToolMap } from './skill.js';
+import { toolList as bashToolList, toolMap as bashToolMap } from './bash.js';
+import { toolList as readFileToolList, toolMap as readFileToolMap } from './read_file.js';
+import { toolList as writeFileToolList, toolMap as writeFileToolMap } from './write_file.js';
+import { toolList as confirmToolList, toolMap as confirmToolMap } from './confirm.js';
+import { toolList as selectToolList, toolMap as selectToolMap } from './select.js';
+import { toolList as globToolList, toolMap as globToolMap } from './glob.js';
+import { toolList as grepToolList, toolMap as grepToolMap } from './grep.js';
+
+const toolList = [
+  ...skillToolList,
+  ...bashToolList,
+  ...readFileToolList,
+  ...writeFileToolList,
+  ...confirmToolList,
+  ...selectToolList,
+  ...globToolList,
+  ...grepToolList,
+];
+const toolMap = {
+  ...skillToolMap,
+  ...bashToolMap,
+  ...readFileToolMap,
+  ...writeFileToolMap,
+  ...confirmToolMap,
+  ...selectToolMap,
+  ...globToolMap,
+  ...grepToolMap,
+};
 
 /**
  * 将 OpenAI function tool 定义注册到 localClient

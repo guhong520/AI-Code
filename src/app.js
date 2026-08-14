@@ -161,7 +161,7 @@ async function handleCommand(input, rl) {
  * 执行模型返回的一组 tool_calls，并把 role=tool 结果追加到 messages 与 history
  * @param {any[]} toolCalls
  * @param {any[]} messages
- * @param {{ text?: (s: string) => void }} [spinner]
+ * @param {{ text?: (s: string) => void, stop?: () => void, start?: () => void }} [spinner]
  */
 async function runToolCalls(toolCalls, messages, spinner) {
   for (const call of toolCalls) {
@@ -169,7 +169,14 @@ async function runToolCalls(toolCalls, messages, spinner) {
     const args = parseToolArguments(call?.function?.arguments ?? call?.arguments);
     const callId = call?.id || `call_${name || 'unknown'}`;
 
-    if (spinner) {
+    // confirm / select 等工具需要占用 stdin；先停 spinner，避免与输入提示抢终端
+    if (spinner?.stop) {
+      spinner.stop();
+    }
+    if (name === 'confirm' || name === 'select') {
+      printSystem(chalk.cyan(`调用工具 ${name}…`));
+    } else if (spinner) {
+      spinner.start?.();
       spinner.text = chalk.gray(`调用工具 ${name || 'unknown'}…`);
     }
 
@@ -179,6 +186,11 @@ async function runToolCalls(toolCalls, messages, spinner) {
       content = toolResultToText(result);
     } catch (err) {
       content = `工具执行失败：${err?.message || String(err)}`;
+    }
+
+    if (spinner?.start) {
+      spinner.start();
+      spinner.text = chalk.gray('继续思考…');
     }
 
     const toolMessage = {
