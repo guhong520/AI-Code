@@ -15,15 +15,25 @@ import { chatCompletion, hasApiKey, getModel } from './request/openai.js';
 import { saveHistoryJson } from './utils/fsHandle.js';
 import { COMMANDS, parseCommand, reloadCommands } from './commands/registry.js';
 import { buildUserContent } from './utils/mentions.js';
-import { readSystem, getUserContext } from './utils/contextRead.js';
+import { readSystem, getUserContext, getSkillHeaders } from './utils/contextRead.js';
+import {
+  loadTools,
+  toOpenAiTools,
+  excuteTool,
+  parseToolArguments,
+  toolResultToText,
+} from './tool/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
 
+/** 单轮对话内最多允许的 tool 调用轮次，防止死循环 */
+const MAX_TOOL_ROUNDS = 8;
+
 // 始终从项目根目录加载 .env，避免 cwd 不同导致读不到密钥
 dotenv.config({ path: join(rootDir, '.env'), quiet: true });
 
-/** 对话历史（不含 system / 本地用户上下文，保存时也不写入） */
+/** 对话历史（不含 system / 本地用户上下文 / skill 摘要；含 tool_calls 与 tool 结果） */
 const history = [];
 
 /** 是否正在退出，避免重复保存/退出 */
@@ -35,7 +45,16 @@ let systemPrompt = '你是一个有用的 AI 编程助手。';
 /** 本地用户/项目上下文（启动时 getUserContext 加载一次，仅请求时以 user 注入） */
 let userContext = '';
 
-/** 启动时读取 FrontSystem / front.md 等，会话内复用，不每次请求重读 */
+/** Skill 调度上下文（启动时 getSkillHeaders 加载一次，仅请求时以 user 注入，不写入 history） */
+let skillContext = '';
+
+/** OpenAI function tools（启动时 loadTools 加载一次） */
+let openAiTools = [];
+
+/** 工具加载失败时的提示（启动横幅后再打印） */
+let toolsLoadError = '';
+
+/** 启动时读取 FrontSystem / front.md / skills / tools 等，会话内复用，不每次请求重读 */
 async function loadContextPrompts() {
   try {
     systemPrompt = await readSystem();
@@ -46,6 +65,19 @@ async function loadContextPrompts() {
     userContext = await getUserContext();
   } catch {
     userContext = '';
+  }
+  try {
+    skillContext = await getSkillHeaders();
+  } catch {
+    skillContext = '';
+  }
+  try {
+    const { toolList } = await loadTools();
+    openAiTools = toOpenAiTools(toolList);
+    toolsLoadError = '';
+  } catch (err) {
+    openAiTools = [];
+    toolsLoadError = err?.message || String(err);
   }
 }
 
@@ -126,27 +158,96 @@ async function handleCommand(input, rl) {
 }
 
 /**
- * 将用户问题发给大模型并返回回复
+ * 执行模型返回的一组 tool_calls，并把 role=tool 结果追加到 messages 与 history
+ * @param {any[]} toolCalls
+ * @param {any[]} messages
+ * @param {{ text?: (s: string) => void }} [spinner]
+ */
+async function runToolCalls(toolCalls, messages, spinner) {
+  for (const call of toolCalls) {
+    const name = call?.function?.name || call?.name || '';
+    const args = parseToolArguments(call?.function?.arguments ?? call?.arguments);
+    const callId = call?.id || `call_${name || 'unknown'}`;
+
+    if (spinner) {
+      spinner.text = chalk.gray(`调用工具 ${name || 'unknown'}…`);
+    }
+
+    let content;
+    try {
+      const result = await excuteTool(name, args);
+      content = toolResultToText(result);
+    } catch (err) {
+      content = `工具执行失败：${err?.message || String(err)}`;
+    }
+
+    const toolMessage = {
+      role: 'tool',
+      tool_call_id: callId,
+      content: content || '',
+    };
+    messages.push(toolMessage);
+    history.push(toolMessage);
+  }
+}
+
+/**
+ * 将用户问题发给大模型并返回回复（支持 function tool 多轮调用）
  * @param {string} userInput 已增强（含 @ 文件内容）的消息
+ * @param {{ text?: (s: string) => void }} [spinner]
  * @returns {Promise<string>}
  */
-async function reply(userInput) {
+async function reply(userInput, spinner) {
+  const historyCheckpoint = history.length;
   history.push({ role: 'user', content: userInput });
 
-  // system / 本地 user 上下文仅拼进本次请求，不写入 history
+  // system / 本地 user / skill 上下文仅拼进本次请求，不写入 history
   const messages = [{ role: 'system', content: systemPrompt }];
   if (userContext.trim()) {
     messages.push({ role: 'user', content: userContext });
   }
+  if (skillContext.trim()) {
+    messages.push({ role: 'user', content: skillContext });
+  }
   messages.push(...history);
 
   try {
-    const assistantText = await chatCompletion(messages);
-    history.push({ role: 'assistant', content: assistantText });
-    return assistantText;
+    let assistantText = '';
+
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+      if (spinner) {
+        spinner.text = chalk.gray(round === 0 ? '思考中…' : '继续思考…');
+      }
+
+      const message = await chatCompletion(messages, { tools: openAiTools });
+      const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+
+      // 必须把完整 assistant message（含 tool_calls）回传，否则下一轮 API 会报错
+      const assistantMessage = {
+        role: 'assistant',
+        content: message.content ?? null,
+        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+      };
+      messages.push(assistantMessage);
+
+      if (toolCalls.length === 0) {
+        assistantText = String(message.content || '').trim();
+        if (!assistantText) {
+          throw new Error('大模型未返回有效内容');
+        }
+        history.push({ role: 'assistant', content: assistantText });
+        return assistantText;
+      }
+
+      // 含 tool_calls 的中间轮也写入 history，供后续多轮与落盘复用
+      history.push(assistantMessage);
+      await runToolCalls(toolCalls, messages, spinner);
+    }
+
+    throw new Error(`工具调用超过 ${MAX_TOOL_ROUNDS} 轮，已中止`);
   } catch (err) {
-    // 请求失败时回滚本轮用户消息，避免污染后续上下文
-    history.pop();
+    // 请求失败时回滚本轮写入的 user / tool_calls / tool 结果
+    history.length = historyCheckpoint;
     throw err;
   }
 }
@@ -205,7 +306,7 @@ async function chatLoop(rl) {
         spinner.stop();
         continue;
       }
-      const answer = await reply(content);
+      const answer = await reply(content, spinner);
       spinner.stop();
       printAssistant(answer);
     } catch (err) {
@@ -215,7 +316,7 @@ async function chatLoop(rl) {
 }
 
 async function main() {
-  // 启动时加载一次 system / 用户上下文（类似 CLAUDE.md），后续请求复用缓存
+  // 启动时加载一次 system / 用户 / skill / tools，后续请求复用缓存，不写入对话历史
   await loadContextPrompts();
   // 扫描 ~/.front/commands 与项目 .front/commands，合并自定义指令
   await reloadCommands();
@@ -229,6 +330,17 @@ async function main() {
     console.log();
   } else {
     printSystem(chalk.gray(`模型：${getModel()}`));
+    if (toolsLoadError) {
+      printSystem(chalk.yellow(`工具加载失败：${toolsLoadError}`));
+    } else if (openAiTools.length > 0) {
+      printSystem(
+        chalk.gray(
+          `工具：${openAiTools.length} 个（${openAiTools.map((t) => t.function.name).join(', ')}）`,
+        ),
+      );
+    } else {
+      printSystem(chalk.gray('工具：未加载到可用 function tool'));
+    }
     console.log();
   }
 

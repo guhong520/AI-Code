@@ -43,20 +43,28 @@ function getClient() {
 
 /**
  * 调用大模型进行多轮对话补全
- * @param {{ role: string, content: string }[]} messages
- * @returns {Promise<string>}
+ * 支持传入 OpenAI function tools；返回完整 assistant message（可能含 tool_calls）
+ * @param {{ role: string, content?: string | null, tool_calls?: unknown[], tool_call_id?: string, name?: string }[]} messages
+ * @param {{ tools?: { type: 'function', function: { name: string, description?: string, parameters?: object } }[] }} [options]
+ * @returns {Promise<{ role: string, content: string | null, tool_calls?: any[] }>}
  */
-export async function chatCompletion(messages) {
-  const completion = await getClient().chat.completions.create({
+export async function chatCompletion(messages, options = {}) {
+  /** @type {Record<string, unknown>} */
+  const body = {
     model: getModel(),
     messages,
-  });
+  };
 
-  const text = completion.choices[0]?.message?.content;
-  if (!text) {
+  if (Array.isArray(options.tools) && options.tools.length > 0) {
+    body.tools = options.tools;
+  }
+
+  const completion = await getClient().chat.completions.create(body);
+  const message = completion.choices[0]?.message;
+  if (!message) {
     throw new Error('大模型未返回有效内容');
   }
-  return text;
+  return message;
 }
 
 export { getModel };
