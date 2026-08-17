@@ -5,6 +5,11 @@ import { fileURLToPath } from 'node:url';
 import { getProjectRoot } from './projectFiles.js';
 import { getUserHomeDir } from './pathUtils.js';
 import { formatRagHits, searchRagChunks } from './ragHandle.js';
+import {
+  getProjectMemoryPath,
+  getUserMemoryPath,
+  readTextOrEmpty,
+} from './memoryUtils.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -91,9 +96,11 @@ export async function readSystem() {
 }
 
 /**
- * 读取 docs/userContext.md，注入用户级 front.md 与项目根目录 front.md
+ * 读取 docs/userContext.md，注入用户/项目 front.md 与记忆文件
  * - ~/.front/front.md → ${userPath} / ${userContent}
  * - <projectRoot>/front.md → ${projectPath} / ${projectContent}
+ * - ~/.front/memory/memory.md → ${userMemory}
+ * - <project>/.front/memory/memory.md → ${projectMemory}
  * 文件不存在时对应占位符填空字符串
  * @returns {Promise<string>}
  */
@@ -121,11 +128,18 @@ export async function getUserContext() {
     // 文件不存在则保持空字符串
   }
 
+  const [userMemory, projectMemory] = await Promise.all([
+    readTextOrEmpty(getUserMemoryPath()),
+    readTextOrEmpty(await getProjectMemoryPath()),
+  ]);
+
   return template
     .replaceAll('${userPath}', userPathOut)
     .replaceAll('${userContent}', userContent)
     .replaceAll('${projectPath}', projectPathOut)
     .replaceAll('${projectContent}', projectContent)
+    .replaceAll('${userMemory}', userMemory)
+    .replaceAll('${projectMemory}', projectMemory)
     .trim();
 }
 
