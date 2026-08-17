@@ -21,6 +21,10 @@ function getModel() {
   return process.env.OPENAI_MODEL || 'qwen3.7-plus';
 }
 
+function getEmbeddingModel() {
+  return process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-v3';
+}
+
 /** @type {OpenAI | null} */
 let client = null;
 
@@ -67,4 +71,25 @@ export async function chatCompletion(messages, options = {}) {
   return message;
 }
 
-export { getModel };
+/**
+ * 批量生成文本向量
+ * @param {string[]} texts
+ * @returns {Promise<number[][]>}
+ */
+export async function createEmbeddings(texts) {
+  const input = (Array.isArray(texts) ? texts : []).map((t) => String(t ?? ''));
+  if (input.length === 0) return [];
+
+  const response = await getClient().embeddings.create({
+    model: getEmbeddingModel(),
+    input,
+  });
+
+  const sorted = [...(response.data || [])].sort((a, b) => a.index - b.index);
+  if (sorted.length !== input.length) {
+    throw new Error(`向量数量与文本数量不一致：期望 ${input.length}，实际 ${sorted.length}`);
+  }
+  return sorted.map((item) => item.embedding);
+}
+
+export { getModel, getEmbeddingModel };

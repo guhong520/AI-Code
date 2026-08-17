@@ -2,6 +2,7 @@ import help from './systemCommands/help.js';
 import clear from './systemCommands/clear.js';
 import exit from './systemCommands/exit.js';
 import project from './systemCommands/project.js';
+import vector from './systemCommands/vector.js';
 import { loadCustomCommands } from './loadCustom.js';
 
 /**
@@ -32,7 +33,7 @@ import { loadCustomCommands } from './loadCustom.js';
  */
 
 /** @type {CommandDef[]} */
-export const BUILTIN_COMMANDS = [help, clear, exit, project];
+export const BUILTIN_COMMANDS = [help, clear, exit, project, vector];
 
 /**
  * 当前生效的命令列表（内置 + 自定义）。启动时由 reloadCommands 填充。
