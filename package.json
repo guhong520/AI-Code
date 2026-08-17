@@ -16,6 +16,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "chalk": "^6.0.0",
     "dotenv": "^17.4.2",
+    "mammoth": "^1.12.1",
     "marked": "^11.0.1",
     "marked-terminal": "^7.3.0",
     "openai": "^7.4.0",

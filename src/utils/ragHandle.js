@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs';
 import { access, mkdir, readdir, readFile, stat } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
 import * as lancedb from '@lancedb/lancedb';
+import mammoth from 'mammoth';
 import { createEmbeddings } from '../request/openai.js';
 import { findProjectRoot } from './fsHandle.js';
 import { getCwd, getUserHomeDir } from './pathUtils.js';
@@ -11,6 +12,9 @@ const TABLE_NAME = 'doc_chunks';
 const CHUNK_SIZE = 800;
 const CHUNK_OVERLAP = 120;
 const EMBED_BATCH_SIZE = 32;
+
+/** 需专用解析器提取文本的格式（本身是二进制容器，不能当纯文本读） */
+const EXTRACTABLE_EXTENSIONS = new Set(['.docx']);
 
 /** 明确视为二进制、直接跳过的扩展名 */
 const BINARY_EXTENSIONS = new Set([
@@ -46,6 +50,7 @@ const BINARY_EXTENSIONS = new Set([
   '.jar',
   '.pyc',
   '.node',
+  '.doc', // 旧版 Word，暂不支持
 ]);
 
 /**
@@ -105,10 +110,29 @@ function escapeSqlString(value) {
  */
 function isBinaryFile(filePath, buf) {
   const ext = extname(filePath).toLowerCase();
+  if (EXTRACTABLE_EXTENSIONS.has(ext)) return false;
   if (BINARY_EXTENSIONS.has(ext)) return true;
   if (!buf) return false;
   const sample = buf.subarray(0, Math.min(buf.length, 8192));
   return sample.includes(0);
+}
+
+/**
+ * 读取文档文本：docx 用 mammoth，其余按 UTF-8
+ * @param {string} filePath
+ * @returns {Promise<string>}
+ */
+export async function readDocText(filePath) {
+  const ext = extname(filePath).toLowerCase();
+  if (ext === '.docx') {
+    const result = await mammoth.extractRawText({ path: filePath });
+    return String(result.value || '').trim();
+  }
+  const raw = await readFile(filePath);
+  if (isBinaryFile(filePath, raw)) {
+    throw new Error(`不支持的二进制文件：${filePath}`);
+  }
+  return raw.toString('utf8');
 }
 
 /**
@@ -161,9 +185,12 @@ export async function listDocFiles(docDir) {
   /** @type {DocFileInfo[]} */
   const textFiles = [];
   for (const file of files) {
-    if (BINARY_EXTENSIONS.has(extname(file.absolutePath).toLowerCase())) {
+    const ext = extname(file.absolutePath).toLowerCase();
+    if (EXTRACTABLE_EXTENSIONS.has(ext)) {
+      textFiles.push(file);
       continue;
     }
+    if (BINARY_EXTENSIONS.has(ext)) continue;
     const head = await readFileHead(file.absolutePath, 8192);
     if (isBinaryFile(file.absolutePath, head)) continue;
     textFiles.push(file);
@@ -321,12 +348,16 @@ async function deleteByPaths(table, paths) {
  * @returns {Promise<{ path: string, text: string, chunkIndex: number, fileHash: string, mtimeMs: number }[]>}
  */
 async function fileToPieces(file, fileHash) {
-  const raw = await readFile(file.absolutePath);
-  if (isBinaryFile(file.absolutePath, raw)) return [];
-  const chunks = chunkText(raw.toString('utf8'));
-  return chunks.map((text, chunkIndex) => ({
+  let text = '';
+  try {
+    text = await readDocText(file.absolutePath);
+  } catch {
+    return [];
+  }
+  const chunks = chunkText(text);
+  return chunks.map((piece, chunkIndex) => ({
     path: file.path,
-    text,
+    text: piece,
     chunkIndex,
     fileHash,
     mtimeMs: file.mtimeMs,
@@ -461,4 +492,102 @@ export async function buildRagIndexes() {
   const userResult = await syncUserDocs();
   const projectResult = await syncProjectDocs();
   return { userResult, projectResult };
+}
+
+/**
+ * @typedef {{ path: string, text: string, source: 'user' | 'project', distance?: number, chunkIndex?: number }} RagHit
+ */
+
+/**
+ * 打开已有 doc_chunks 表；不存在则返回 null
+ * @param {string} lanceDir
+ * @returns {Promise<import('@lancedb/lancedb').Table | null>}
+ */
+async function tryOpenTable(lanceDir) {
+  try {
+    await access(lanceDir);
+  } catch {
+    return null;
+  }
+  try {
+    const db = await lancedb.connect(lanceDir);
+    const names = await db.tableNames();
+    if (!names.includes(TABLE_NAME)) return null;
+    return db.openTable(TABLE_NAME);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 在单个向量库中检索
+ * @param {string} lanceDir
+ * @param {number[]} queryVector
+ * @param {number} limit
+ * @param {'user' | 'project'} source
+ * @returns {Promise<RagHit[]>}
+ */
+async function searchOneLance(lanceDir, queryVector, limit, source) {
+  const table = await tryOpenTable(lanceDir);
+  if (!table) return [];
+
+  const rows = await table
+    .vectorSearch(queryVector)
+    .select(['path', 'text', 'chunkIndex', '_distance'])
+    .limit(limit)
+    .toArray();
+
+  return rows.map((row) => ({
+    path: String(row.path ?? ''),
+    text: String(row.text ?? ''),
+    chunkIndex: Number(row.chunkIndex ?? 0),
+    distance: typeof row._distance === 'number' ? row._distance : undefined,
+    source,
+  }));
+}
+
+/**
+ * 将用户问题转为向量，在用户/项目向量库中检索相关原文片段
+ * @param {string} question
+ * @param {{ topK?: number }} [options]
+ * @returns {Promise<RagHit[]>}
+ */
+export async function searchRagChunks(question, options = {}) {
+  const q = String(question ?? '').trim();
+  if (!q) return [];
+
+  const topK = options.topK ?? 5;
+  const [queryVector] = await createEmbeddings([q]);
+  if (!queryVector?.length) return [];
+
+  const perSource = Math.max(1, Math.ceil(topK / 2));
+  const [userHits, projectHits] = await Promise.all([
+    searchOneLance(getUserLanceDir(), queryVector, perSource, 'user'),
+    searchOneLance(await getProjectLanceDir(), queryVector, perSource, 'project'),
+  ]);
+
+  return [...userHits, ...projectHits]
+    .filter((h) => h.text.trim())
+    .sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0))
+    .slice(0, topK);
+}
+
+/**
+ * 将检索命中格式化为可注入提示词的文本
+ * @param {RagHit[]} hits
+ * @returns {string}
+ */
+export function formatRagHits(hits) {
+  if (!hits?.length) {
+    return '（未检索到相关文档片段）';
+  }
+  return hits
+    .map((hit, i) => {
+      const from = hit.source === 'user' ? '用户文档' : '项目文档';
+      return [
+        `### 片段 ${i + 1}（${from} · ${hit.path}）`,
+        hit.text.trim(),
+      ].join('\n');
+    })
+    .join('\n\n');
 }

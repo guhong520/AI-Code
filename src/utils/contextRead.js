@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getProjectRoot } from './projectFiles.js';
 import { getUserHomeDir } from './pathUtils.js';
+import { formatRagHits, searchRagChunks } from './ragHandle.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -151,4 +152,26 @@ export async function getSkillHeaders() {
 
   const skillcontent = skills.map(formatSkillBlock).join('\n\n');
   return template.replaceAll('${skillcontent}', skillcontent).trim();
+}
+
+/**
+ * 问题向量检索 → 取原文 → 与 ragTemplate.md 拼接，得到本轮发给模型的完整用户提示
+ * 无有效问题时返回空字符串；无命中时仍会填入「未检索到」说明
+ * @param {string} question
+ * @param {{ topK?: number }} [options]
+ * @returns {Promise<string>}
+ */
+export async function buildRagPrompt(question, options = {}) {
+  const q = String(question ?? '').trim();
+  if (!q) return '';
+
+  const templatePath = join(__dirname, '..', 'docs', 'ragTemplate.md');
+  const template = await readFile(templatePath, 'utf8');
+  const hits = await searchRagChunks(q, options);
+  const ragContent = formatRagHits(hits);
+
+  return template
+    .replaceAll('${ragContent}', ragContent)
+    .replaceAll('${question}', q)
+    .trim();
 }

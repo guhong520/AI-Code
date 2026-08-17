@@ -15,7 +15,7 @@ import { chatCompletion, hasApiKey, getModel } from './request/openai.js';
 import { saveHistoryJson } from './utils/fsHandle.js';
 import { COMMANDS, parseCommand, reloadCommands } from './commands/registry.js';
 import { buildUserContent } from './utils/mentions.js';
-import { readSystem, getUserContext, getSkillHeaders } from './utils/contextRead.js';
+import { readSystem, getUserContext, getSkillHeaders, buildRagPrompt } from './utils/contextRead.js';
 import {
   loadTools,
   toOpenAiTools,
@@ -221,7 +221,30 @@ async function reply(userInput, spinner) {
   if (skillContext.trim()) {
     messages.push({ role: 'user', content: skillContext });
   }
-  messages.push(...history);
+
+  // RAG：问题转向量 → 检索原文 → 与模板拼接；仅替换本轮发给模型的 user 内容，history 仍保留原问
+  let ragPrompt = '';
+  try {
+    if (spinner) {
+      spinner.text = chalk.gray('检索本地知识库…');
+    }
+    ragPrompt = await buildRagPrompt(userInput);
+  } catch (err) {
+    printSystem(
+      chalk.yellow(
+        `知识库检索跳过：${err instanceof Error ? err.message : String(err)}`,
+      ),
+    );
+  }
+
+  for (let i = 0; i < history.length; i += 1) {
+    const msg = history[i];
+    if (i === history.length - 1 && msg.role === 'user' && ragPrompt) {
+      messages.push({ role: 'user', content: ragPrompt });
+    } else {
+      messages.push(msg);
+    }
+  }
 
   try {
     let assistantText = '';
