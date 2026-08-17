@@ -7,6 +7,8 @@ import { toolList as confirmToolList, toolMap as confirmToolMap } from './confir
 import { toolList as selectToolList, toolMap as selectToolMap } from './select.js';
 import { toolList as globToolList, toolMap as globToolMap } from './glob.js';
 import { toolList as grepToolList, toolMap as grepToolMap } from './grep.js';
+import { toolList as memoryGetToolList, toolMap as memoryGetToolMap } from './memory_get.js';
+import { toolList as memorySaveToolList, toolMap as memorySaveToolMap } from './memory_save.js';
 
 const toolList = [
   ...skillToolList,
@@ -17,6 +19,8 @@ const toolList = [
   ...selectToolList,
   ...globToolList,
   ...grepToolList,
+  ...memoryGetToolList,
+  ...memorySaveToolList,
 ];
 const toolMap = {
   ...skillToolMap,
@@ -27,6 +31,8 @@ const toolMap = {
   ...selectToolMap,
   ...globToolMap,
   ...grepToolMap,
+  ...memoryGetToolMap,
+  ...memorySaveToolMap,
 };
 
 /**

@@ -3,6 +3,7 @@ import clear from './systemCommands/clear.js';
 import exit from './systemCommands/exit.js';
 import project from './systemCommands/project.js';
 import vector from './systemCommands/vector.js';
+import memory from './systemCommands/memory.js';
 import { loadCustomCommands } from './loadCustom.js';
 
 /**
@@ -27,13 +28,13 @@ import { loadCustomCommands } from './loadCustom.js';
  *   aliases?: string[],
  *   run: (ctx: CommandContext) => Promise<
  *     | { type: 'blocking' }
- *     | { type: 'passthrough', context: string, userText: string }
+ *     | { type: 'passthrough', context: string, userText: string, skipRag?: boolean }
  *   >,
  * }} CommandDef
  */
 
 /** @type {CommandDef[]} */
-export const BUILTIN_COMMANDS = [help, clear, exit, project, vector];
+export const BUILTIN_COMMANDS = [help, clear, exit, project, vector, memory];
 
 /**
  * 当前生效的命令列表（内置 + 自定义）。启动时由 reloadCommands 填充。

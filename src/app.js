@@ -133,7 +133,7 @@ function mergeCommandContext(userText, context) {
  * @returns {Promise<
  *   | { type: 'none' }
  *   | { type: 'blocking' }
- *   | { type: 'passthrough', context: string, userText: string }
+ *   | { type: 'passthrough', context: string, userText: string, skipRag?: boolean }
  * >}
  */
 async function handleCommand(input, rl) {
@@ -207,9 +207,10 @@ async function runToolCalls(toolCalls, messages, spinner) {
  * 将用户问题发给大模型并返回回复（支持 function tool 多轮调用）
  * @param {string} userInput 已增强（含 @ 文件内容）的消息
  * @param {{ text?: (s: string) => void }} [spinner]
+ * @param {{ skipRag?: boolean }} [options]
  * @returns {Promise<string>}
  */
-async function reply(userInput, spinner) {
+async function reply(userInput, spinner, options = {}) {
   const historyCheckpoint = history.length;
   history.push({ role: 'user', content: userInput });
 
@@ -224,17 +225,19 @@ async function reply(userInput, spinner) {
 
   // RAG：问题转向量 → 检索原文 → 与模板拼接；仅替换本轮发给模型的 user 内容，history 仍保留原问
   let ragPrompt = '';
-  try {
-    if (spinner) {
-      spinner.text = chalk.gray('检索本地知识库…');
+  if (!options.skipRag) {
+    try {
+      if (spinner) {
+        spinner.text = chalk.gray('检索本地知识库…');
+      }
+      ragPrompt = await buildRagPrompt(userInput);
+    } catch (err) {
+      printSystem(
+        chalk.yellow(
+          `知识库检索跳过：${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
     }
-    ragPrompt = await buildRagPrompt(userInput);
-  } catch (err) {
-    printSystem(
-      chalk.yellow(
-        `知识库检索跳过：${err instanceof Error ? err.message : String(err)}`,
-      ),
-    );
   }
 
   for (let i = 0; i < history.length; i += 1) {
@@ -317,6 +320,8 @@ async function chatLoop(rl) {
       cmdResult.type === 'passthrough' ? cmdResult.userText : input;
     const commandContext =
       cmdResult.type === 'passthrough' ? cmdResult.context : '';
+    const skipRag =
+      cmdResult.type === 'passthrough' ? Boolean(cmdResult.skipRag) : false;
 
     // 非阻断且无用户文本、无上下文时，无需请求大模型
     if (cmdResult.type === 'passthrough' && !userText.trim() && !commandContext.trim()) {
@@ -341,7 +346,7 @@ async function chatLoop(rl) {
         spinner.stop();
         continue;
       }
-      const answer = await reply(content, spinner);
+      const answer = await reply(content, spinner, { skipRag });
       spinner.stop();
       printAssistant(answer);
     } catch (err) {
