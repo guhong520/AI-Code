@@ -1,5 +1,5 @@
 import { readdir } from 'node:fs/promises';
-import { join, relative, sep } from 'node:path';
+import { extname, join, relative, sep } from 'node:path';
 import { findProjectRoot } from './fsHandle.js';
 import { getCwd } from './pathUtils.js';
 
@@ -21,8 +21,14 @@ const IGNORE_DIRS = new Set([
 /** 忽略的文件名 */
 const IGNORE_FILES = new Set(['.DS_Store', 'Thumbs.db']);
 
+/** 设计图支持的扩展名（发给视觉模型的常见格式） */
+export const DESIGN_IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+
 /** @type {{ root: string, files: string[] } | null} */
 let cache = null;
+
+/** @type {{ root: string, files: string[] } | null} */
+let designCache = null;
 
 /**
  * 递归收集项目内相对路径文件列表
@@ -111,4 +117,78 @@ export async function filterProjectFiles(prefix, files) {
  */
 export async function getProjectRoot() {
   return findProjectRoot(getCwd());
+}
+
+/**
+ * 项目设计图目录：{projectRoot}/.front/design
+ * @returns {Promise<string>}
+ */
+export async function getDesignDir() {
+  const root = await getProjectRoot();
+  return join(root, '.front', 'design');
+}
+
+/**
+ * 递归收集设计图目录内的图片相对路径
+ * @param {string} dir
+ * @param {string} root
+ * @param {string[]} out
+ */
+async function walkDesignImages(dir, root, out) {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await walkDesignImages(full, root, out);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (!DESIGN_IMAGE_EXTS.has(extname(entry.name).toLowerCase())) continue;
+    out.push(relative(root, full).split(sep).join('/'));
+  }
+}
+
+/**
+ * 列出 .front/design 下的图片（相对 design 目录的路径）
+ * @param {{ refresh?: boolean }} [options]
+ * @returns {Promise<string[]>}
+ */
+export async function listDesignImages(options = {}) {
+  const root = await getProjectRoot();
+  const designDir = join(root, '.front', 'design');
+
+  if (!options.refresh && designCache && designCache.root === root) {
+    return designCache.files;
+  }
+
+  const files = [];
+  await walkDesignImages(designDir, designDir, files);
+  files.sort((a, b) => a.localeCompare(b));
+  designCache = { root, files };
+  return files;
+}
+
+/**
+ * 按前缀过滤设计图路径（大小写不敏感）
+ * @param {string} prefix 不含 # 的路径前缀
+ * @param {string[]} [files]
+ * @returns {Promise<string[]>}
+ */
+export async function filterDesignImages(prefix, files) {
+  const list = files || (await listDesignImages());
+  const p = String(prefix || '').toLowerCase().replace(/\\/g, '/');
+  if (!p) {
+    return list;
+  }
+  return list.filter((f) => {
+    const lower = f.toLowerCase();
+    if (lower.startsWith(p)) return true;
+    return lower.split('/').some((seg) => seg.startsWith(p));
+  });
 }

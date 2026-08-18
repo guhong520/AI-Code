@@ -5,7 +5,7 @@ const MAX_VISIBLE = 8;
 
 /**
  * @typedef {{ label: string, value: string, description?: string }} SuggestItem
- * @typedef {'slash' | 'at' | null} SuggestMode
+ * @typedef {'slash' | 'at' | 'hash' | null} SuggestMode
  */
 
 /**
@@ -63,6 +63,33 @@ function detectAt(line, cursor) {
 }
 
 /**
+ * 检测光标处的 #token（设计图）
+ * @param {string} line
+ * @param {number} cursor
+ * @returns {{ mode: 'hash', prefix: string, start: number, end: number } | null}
+ */
+function detectHash(line, cursor) {
+  let start = cursor;
+  while (start > 0 && !/\s/.test(line[start - 1])) {
+    start -= 1;
+  }
+  let end = cursor;
+  while (end < line.length && !/\s/.test(line[end])) {
+    end += 1;
+  }
+  const token = line.slice(start, end);
+  if (!token.startsWith('#')) {
+    return null;
+  }
+  return {
+    mode: 'hash',
+    prefix: token.slice(1),
+    start,
+    end,
+  };
+}
+
+/**
  * @param {string} line
  * @param {number} cursor
  */
@@ -70,15 +97,18 @@ function detectSuggest(line, cursor) {
   // slash 优先（行首）
   const slash = detectSlash(line, cursor);
   if (slash) return slash;
-  return detectAt(line, cursor);
+  const at = detectAt(line, cursor);
+  if (at) return at;
+  return detectHash(line, cursor);
 }
 
 /**
- * 带 / 与 @ 建议列表的交互式行输入
+ * 带 /、@ 与 # 建议列表的交互式行输入
  * @param {{
  *   prompt?: string,
  *   getSlashItems?: (prefix: string) => SuggestItem[] | Promise<SuggestItem[]>,
  *   getAtItems?: (prefix: string) => SuggestItem[] | Promise<SuggestItem[]>,
+ *   getHashItems?: (prefix: string) => SuggestItem[] | Promise<SuggestItem[]>,
  * }} [options]
  * @returns {Promise<string>}
  */
@@ -87,6 +117,7 @@ export function askWithSuggest(options = {}) {
     options.prompt ?? chalk.bold.green('你') + chalk.gray(' › ');
   const getSlashItems = options.getSlashItems || (() => []);
   const getAtItems = options.getAtItems || (() => []);
+  const getHashItems = options.getHashItems || (() => []);
 
   return new Promise((resolve, reject) => {
     const stdin = process.stdin;
@@ -174,8 +205,10 @@ export function askWithSuggest(options = {}) {
       try {
         if (ctx.mode === 'slash') {
           nextItems = await Promise.resolve(getSlashItems(ctx.prefix));
-        } else {
+        } else if (ctx.mode === 'at') {
           nextItems = await Promise.resolve(getAtItems(ctx.prefix));
+        } else {
+          nextItems = await Promise.resolve(getHashItems(ctx.prefix));
         }
       } catch {
         nextItems = [];
@@ -198,10 +231,23 @@ export function askWithSuggest(options = {}) {
     }
 
     /**
-     * @param {'slash' | 'at'} mode
+     * @param {'slash' | 'at' | 'hash'} mode
      */
     function drawSuggest(mode) {
       if (!items.length) {
+        if (mode === 'hash') {
+          suggestRows = 2;
+          stdout.write('\n');
+          stdout.write(
+            '\x1b[2K' +
+              chalk.gray('  将 png/jpg/gif/webp 放到 .front/design 后可用 # 选择'),
+          );
+          stdout.write('\n\x1b[2K');
+          stdout.write(chalk.gray('  （当前暂无设计图）'));
+          stdout.write(`\x1b[${suggestRows}A`);
+          renderLine();
+          return;
+        }
         suggestRows = 0;
         return;
       }
@@ -214,7 +260,9 @@ export function askWithSuggest(options = {}) {
       const hint =
         mode === 'slash'
           ? chalk.gray('  ↑↓ 选择  Tab 确认  继续输入筛选')
-          : chalk.gray('  ↑↓ 选择  Tab 填入文件  继续输入筛选');
+          : mode === 'at'
+            ? chalk.gray('  ↑↓ 选择  Tab 填入文件  继续输入筛选')
+            : chalk.gray('  ↑↓ 选择  Tab 填入设计图  继续输入筛选');
       stdout.write('\x1b[2K' + hint);
 
       visible.forEach((item, i) => {
@@ -246,7 +294,11 @@ export function askWithSuggest(options = {}) {
 
       const item = items[selected];
       const insert =
-        ctx.mode === 'slash' ? item.value : `@${item.value}`;
+        ctx.mode === 'slash'
+          ? item.value
+          : ctx.mode === 'at'
+            ? `@${item.value}`
+            : `#${item.value} `;
 
       const before = line.slice(0, ctx.start);
       const after = line.slice(ctx.end);
@@ -293,7 +345,7 @@ export function askWithSuggest(options = {}) {
       if (key.name === 'tab') {
         if (items.length) {
           applySelection();
-          // Tab 填入后重新刷新（slash 填完通常无列表；at 可能继续）
+          // Tab 填入后重新刷新（slash 填完通常无列表；at / hash 可能继续）
           void refreshSuggest();
         }
         return;

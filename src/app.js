@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import dotenv from 'dotenv';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -14,7 +15,7 @@ import {
 import { chatCompletion, hasApiKey, getModel } from './request/openai.js';
 import { saveHistoryJson } from './utils/fsHandle.js';
 import { COMMANDS, parseCommand, reloadCommands } from './commands/registry.js';
-import { buildUserContent } from './utils/mentions.js';
+import { buildUserContent, extractTextFromContent, applyRagToContent, isEmptyUserContent } from './utils/mentions.js';
 import { readSystem, getUserContext, getSkillHeaders, buildRagPrompt } from './utils/contextRead.js';
 import {
   loadTools,
@@ -27,8 +28,8 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
 
-/** 单轮对话内最多允许的 tool 调用轮次，防止死循环 */
-const MAX_TOOL_ROUNDS = 8;
+/** 单轮对话内最多允许的 tool 调用轮次；调试→改代码→再预览→对比设计稿需要多轮 */
+const MAX_TOOL_ROUNDS = 16;
 
 // 始终从项目根目录加载 .env，避免 cwd 不同导致读不到密钥
 dotenv.config({ path: join(rootDir, '.env'), quiet: true });
@@ -109,13 +110,30 @@ async function exitApp(rl, message = '再见，下次继续～') {
 
 /**
  * 将非阻断指令返回的上下文字符串与用户文本合并，供发给大模型
- * @param {string} userText
+ * @param {string | { type: string, text?: string, image_url?: { url: string } }[]} userContent
  * @param {string} context
- * @returns {string}
+ * @returns {string | { type: string, text?: string, image_url?: { url: string } }[]}
  */
-function mergeCommandContext(userText, context) {
-  const text = String(userText || '').trim();
+function mergeCommandContext(userContent, context) {
   const ctx = String(context || '').trim();
+
+  if (Array.isArray(userContent)) {
+    if (!ctx) return userContent;
+    const parts = userContent.map((p) => ({ ...p }));
+    const textIdx = parts.findIndex((p) => p.type === 'text');
+    if (textIdx >= 0) {
+      const t = String(parts[textIdx].text || '').trim();
+      parts[textIdx] = {
+        type: 'text',
+        text: t && ctx ? `${t}\n\n${ctx}` : t || ctx,
+      };
+    } else {
+      parts.unshift({ type: 'text', text: ctx });
+    }
+    return parts;
+  }
+
+  const text = String(userContent || '').trim();
   if (text && ctx) {
     return `${text}\n\n${ctx}`;
   }
@@ -205,7 +223,7 @@ async function runToolCalls(toolCalls, messages, spinner) {
 
 /**
  * 将用户问题发给大模型并返回回复（支持 function tool 多轮调用）
- * @param {string} userInput 已增强（含 @ 文件内容）的消息
+ * @param {string | { type: string, text?: string, image_url?: { url: string } }[]} userInput 已增强（含 @ 文件 / # 设计图）的消息
  * @param {{ text?: (s: string) => void }} [spinner]
  * @param {{ skipRag?: boolean }} [options]
  * @returns {Promise<string>}
@@ -230,7 +248,7 @@ async function reply(userInput, spinner, options = {}) {
       if (spinner) {
         spinner.text = chalk.gray('检索本地知识库…');
       }
-      ragPrompt = await buildRagPrompt(userInput);
+      ragPrompt = await buildRagPrompt(extractTextFromContent(userInput));
     } catch (err) {
       printSystem(
         chalk.yellow(
@@ -243,7 +261,10 @@ async function reply(userInput, spinner, options = {}) {
   for (let i = 0; i < history.length; i += 1) {
     const msg = history[i];
     if (i === history.length - 1 && msg.role === 'user' && ragPrompt) {
-      messages.push({ role: 'user', content: ragPrompt });
+      messages.push({
+        role: 'user',
+        content: applyRagToContent(msg.content, ragPrompt),
+      });
     } else {
       messages.push(msg);
     }
@@ -342,7 +363,7 @@ async function chatLoop(rl) {
         },
       });
       const content = mergeCommandContext(baseContent, commandContext);
-      if (!content.trim()) {
+      if (isEmptyUserContent(content)) {
         spinner.stop();
         continue;
       }

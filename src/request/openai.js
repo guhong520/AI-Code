@@ -48,7 +48,7 @@ function getClient() {
 /**
  * 调用大模型进行多轮对话补全
  * 支持传入 OpenAI function tools；返回完整 assistant message（可能含 tool_calls）
- * @param {{ role: string, content?: string | null, tool_calls?: unknown[], tool_call_id?: string, name?: string }[]} messages
+ * @param {{ role: string, content?: string | Array<{ type: string, text?: string, image_url?: { url: string } }> | null, tool_calls?: unknown[], tool_call_id?: string, name?: string }[]} messages
  * @param {{ tools?: { type: 'function', function: { name: string, description?: string, parameters?: object } }[] }} [options]
  * @returns {Promise<{ role: string, content: string | null, tool_calls?: any[] }>}
  */

@@ -7,6 +7,9 @@
     "start": "node src/app.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "bin": {
+    "front": "./src/app.js"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -20,6 +23,7 @@
     "marked": "^11.0.1",
     "marked-terminal": "^7.3.0",
     "openai": "^7.4.0",
-    "ora": "^9.4.1"
+    "ora": "^9.4.1",
+    "puppeteer": "^24.43.1"
   }
 }

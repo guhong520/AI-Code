@@ -22,6 +22,7 @@ export default {
     console.log();
     printSystem('提示：行首输入 / 可上下选择指令，Tab 确认');
     printSystem('提示：输入 @ 可选择项目文件，内容会作为上下文发给模型');
+    printSystem('提示：输入 # 可选择 .front/design 中的图片，文字为 text、图片为 image_url 发给模型');
     printSystem(
       '提示：阻断类指令只本地执行；非阻断类会把返回内容与用户文本一并发给模型',
     );

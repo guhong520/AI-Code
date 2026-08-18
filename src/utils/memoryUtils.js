@@ -140,6 +140,17 @@ export function formatHistoryRecord(messages) {
       let body = '';
       if (typeof msg.content === 'string' && msg.content.trim()) {
         body = msg.content.trim();
+      } else if (Array.isArray(msg.content) && msg.content.length > 0) {
+        const texts = msg.content
+          .filter((p) => p?.type === 'text' && p.text)
+          .map((p) => String(p.text).trim())
+          .filter(Boolean);
+        const nImg = msg.content.filter((p) => p?.type === 'image_url').length;
+        body = texts.join('\n');
+        if (nImg) {
+          body = [body, `（附带 ${nImg} 张图片）`].filter(Boolean).join('\n');
+        }
+        if (!body) body = '（空内容）';
       } else if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
         body = `[tool_calls] ${JSON.stringify(msg.tool_calls)}`;
       } else {

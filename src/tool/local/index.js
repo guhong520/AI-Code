@@ -9,6 +9,8 @@ import { toolList as globToolList, toolMap as globToolMap } from './glob.js';
 import { toolList as grepToolList, toolMap as grepToolMap } from './grep.js';
 import { toolList as memoryGetToolList, toolMap as memoryGetToolMap } from './memory_get.js';
 import { toolList as memorySaveToolList, toolMap as memorySaveToolMap } from './memory_save.js';
+import { toolList as debuggerPageToolList, toolMap as debuggerPageToolMap } from './debugger_page.js';
+import { toolList as diffPicToolList, toolMap as diffPicToolMap } from './diff_pic.js';
 
 const toolList = [
   ...skillToolList,
@@ -21,6 +23,8 @@ const toolList = [
   ...grepToolList,
   ...memoryGetToolList,
   ...memorySaveToolList,
+  ...debuggerPageToolList,
+  ...diffPicToolList,
 ];
 const toolMap = {
   ...skillToolMap,
@@ -33,6 +37,8 @@ const toolMap = {
   ...grepToolMap,
   ...memoryGetToolMap,
   ...memorySaveToolMap,
+  ...debuggerPageToolMap,
+  ...diffPicToolMap,
 };
 
 /**
